@@ -2,10 +2,11 @@
 
 Official Node.js / TypeScript SDK for the [BEHAVR](https://behavr-backend-production.up.railway.app) API.
 
-Wraps the two live endpoints:
+Wraps the live endpoints:
 
 - `POST /v1/remember` — upload a file so BEHAVR can remember it
 - `POST /v1/ask` — ask a question against your stored memories
+- `GET /v1/memories` — list your stored memories
 
 ## Installation
 
@@ -63,6 +64,8 @@ new BehavrClient({
 | ---------------- | ------------------------------------------------------------ | -------- |
 | `file`           | file path (`string`) \| `Buffer` \| `{ buffer, filename }` \| `Blob`/`File` | yes      |
 | `externalUserId` | `string`                                                      | no       |
+| `clientId`       | `string`                                                      | no       |
+| `agentId`        | `string`                                                      | no       |
 
 Returns `{ memoryId, status, summary }`.
 
@@ -72,8 +75,60 @@ Returns `{ memoryId, status, summary }`.
 | ---------------- | -------- | -------- |
 | `question`       | `string` | yes      |
 | `externalUserId` | `string` | no       |
+| `clientId`       | `string` | no       |
+| `agentId`        | `string` | no       |
 
 Returns `{ answer, sources }`.
+
+## `list(options?)`
+
+| Option           | Type     | Required |
+| ---------------- | -------- | -------- |
+| `externalUserId` | `string` | no       |
+| `clientId`       | `string` | no       |
+| `agentId`        | `string` | no       |
+| `limit`          | `number` | no       |
+| `status`         | `string` | no       |
+
+Returns `{ memories, total }`. Memory fields are camelCased (`memory_id` → `memoryId`).
+
+```ts
+const result = await behavr.list({ externalUserId: "customer_123" });
+console.log(result.memories); // array of {memoryId, title, category, ...}
+console.log(result.total);
+```
+
+## Scoping memories
+
+Memories are scoped in a hierarchy, from broadest to narrowest:
+
+1. **Account** — your API key.
+2. **`clientId`** — which business/client the memory belongs to.
+3. **`agentId`** — which agent within that client.
+4. **`externalUserId`** — the end user the memory is about.
+
+All three are optional on `remember()`, `ask()` and `list()`. If you omit
+`clientId` or `agentId`, the backend stores them as `"default"`, so existing
+code keeps working unchanged.
+
+```ts
+await behavr.remember({
+  file: "./invoice.pdf",
+  clientId: "acme-corp",
+  agentId: "support-bot",
+  externalUserId: "customer_123",
+});
+
+await behavr.ask({
+  question: "What was the invoice total?",
+  clientId: "acme-corp",
+  agentId: "support-bot",
+});
+```
+
+> **Note:** `ask()` searches within the given `clientId` by default (or
+> `"default"` if none is passed). One client's memories never show up in
+> another client's results.
 
 ## ⚠️ Processing delay after `remember()`
 

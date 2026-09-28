@@ -5,6 +5,9 @@ import {
   AskOptions,
   AskResult,
   BehavrClientOptions,
+  ListOptions,
+  ListResponse,
+  Memory,
   RememberFile,
   RememberOptions,
   RememberResult,
@@ -38,6 +41,12 @@ export class BehavrClient {
     form.append("file", blob, filename);
     if (options.externalUserId) {
       form.append("external_user_id", options.externalUserId);
+    }
+    if (options.clientId) {
+      form.append("client_id", options.clientId);
+    }
+    if (options.agentId) {
+      form.append("agent_id", options.agentId);
     }
 
     const res = await fetch(`${this.baseUrl}/v1/remember`, {
@@ -75,6 +84,8 @@ export class BehavrClient {
       body: JSON.stringify({
         question: options.question,
         ...(options.externalUserId ? { external_user_id: options.externalUserId } : {}),
+        ...(options.clientId ? { client_id: options.clientId } : {}),
+        ...(options.agentId ? { agent_id: options.agentId } : {}),
       }),
     });
 
@@ -88,6 +99,43 @@ export class BehavrClient {
       sources: data.sources ?? [],
     };
   }
+
+  /**
+   * List stored memories, optionally filtered by user and status.
+   */
+  async list({ externalUserId, clientId, agentId, limit, status }: ListOptions = {}): Promise<ListResponse> {
+    const params = new URLSearchParams();
+    if (externalUserId) params.set("external_user_id", externalUserId);
+    if (clientId) params.set("client_id", clientId);
+    if (agentId) params.set("agent_id", agentId);
+    if (limit !== undefined) params.set("limit", String(limit));
+    if (status) params.set("status", status);
+
+    const query = params.toString();
+    const res = await fetch(`${this.baseUrl}/v1/memories${query ? `?${query}` : ""}`, {
+      method: "GET",
+      headers: { "X-API-Key": this.apiKey },
+    });
+
+    const data = await parseJson(res);
+    if (!res.ok) {
+      throw new BehavrApiError(res.status, data, "Failed to list memories.");
+    }
+
+    const memories: Memory[] = (data?.memories ?? []).map(camelizeKeys);
+    return {
+      memories,
+      total: data?.total ?? memories.length,
+    };
+  }
+}
+
+function camelizeKeys(obj: Record<string, unknown>): Memory {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    out[key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = value;
+  }
+  return out as Memory;
 }
 
 async function toBlob(file: RememberFile): Promise<{ blob: Blob; filename: string }> {
