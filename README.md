@@ -107,7 +107,8 @@ Memories are scoped in a hierarchy, from broadest to narrowest:
 3. **`agentId`** — which agent within that client.
 4. **`externalUserId`** — the end user the memory is about.
 
-All three are optional on `remember()`, `ask()` and `list()`. If you omit
+`externalUserId`, `clientId` and `agentId` are all optional on `remember()`,
+`ask()` and `list()`. If you omit
 `clientId` or `agentId`, the backend stores them as `"default"`, so existing
 code keeps working unchanged.
 
@@ -126,9 +127,9 @@ await behavr.ask({
 });
 ```
 
-> **Note:** `ask()` searches within the given `clientId` by default (or
-> `"default"` if none is passed). One client's memories never show up in
-> another client's results.
+> **Note:** `ask()` and `list()` only read memories stored under the
+> `clientId` you pass (`"default"` if omitted). It is a filter your server
+> controls, not a separate credential.
 
 ## ⚠️ Processing delay after `remember()`
 
@@ -175,7 +176,4 @@ try {
 ```bash
 npm install
 npm run build   # compiles src/ -> dist/
-npm test        # runs test.js against the live API (needs BEHAVR_API_KEY)
 ```
-
-This package is not yet published to npm — it's set up for local build/testing only.
