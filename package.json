@@ -20,8 +20,16 @@
     "memory",
     "ai"
   ],
-  "author": "",
+  "author": "Tagbudy Services Pvt. Ltd.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/confuse57/behavr-sdk.git"
+  },
+  "homepage": "https://behavr.in",
+  "bugs": {
+    "url": "https://github.com/confuse57/behavr-sdk/issues"
+  },
   "devDependencies": {
     "typescript": "^5.5.4",
     "@types/node": "^20.14.10"
