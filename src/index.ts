@@ -1,16 +1,28 @@
 import { readFile } from "fs/promises";
 import { basename } from "path";
-import { BehavrApiError } from "./errors";
+import {
+  BehavrApiError,
+  MemoryNotFoundError,
+  MemoryProcessingError,
+  OriginalNotAvailableError,
+  OriginalPendingError,
+  createApiError,
+} from "./errors";
 import {
   AskOptions,
   AskResult,
+  BehavrApiErrorPayload,
   BehavrClientOptions,
+  DeleteMemoryResult,
+  GetOriginalOptions,
   ListOptions,
   ListResponse,
   Memory,
+  OriginalLink,
   RememberFile,
   RememberOptions,
   RememberResult,
+  SourceDetail,
 } from "./types";
 
 const DEFAULT_BASE_URL = "https://behavr-backend-production.up.railway.app";
@@ -48,6 +60,9 @@ export class BehavrClient {
     if (options.agentId) {
       form.append("agent_id", options.agentId);
     }
+    if (typeof options.retainImage === "boolean") {
+      form.append("retain_image", options.retainImage ? "true" : "false");
+    }
 
     const res = await fetch(`${this.baseUrl}/v1/remember`, {
       method: "POST",
@@ -57,14 +72,16 @@ export class BehavrClient {
 
     const data = await parseJson(res);
     if (!res.ok) {
-      throw new BehavrApiError(res.status, data, "Failed to remember file.");
+      throw createApiError(res.status, data, "Failed to remember file.");
     }
 
-    return {
+    const result: RememberResult = {
       memoryId: data.memory_id,
       status: data.status,
       summary: data.summary,
     };
+    if (Array.isArray(data?.warnings)) result.warnings = data.warnings;
+    return result;
   }
 
   /**
@@ -91,13 +108,21 @@ export class BehavrClient {
 
     const data = await parseJson(res);
     if (!res.ok) {
-      throw new BehavrApiError(res.status, data, "Failed to get answer.");
+      throw createApiError(res.status, data, "Failed to get answer.");
     }
 
-    return {
+    const result: AskResult = {
       answer: data.answer,
       sources: data.sources ?? [],
+      sourceDetails: Array.isArray(data?.source_details)
+        ? data.source_details.map(toSourceDetail)
+        : [],
     };
+    if (Array.isArray(data?.warnings)) result.warnings = data.warnings;
+    if (Array.isArray(data?.low_resolution_sources)) {
+      result.lowResolutionSources = data.low_resolution_sources;
+    }
+    return result;
   }
 
   /**
@@ -119,7 +144,7 @@ export class BehavrClient {
 
     const data = await parseJson(res);
     if (!res.ok) {
-      throw new BehavrApiError(res.status, data, "Failed to list memories.");
+      throw createApiError(res.status, data, "Failed to list memories.");
     }
 
     const memories: Memory[] = (data?.memories ?? []).map(camelizeKeys);
@@ -128,6 +153,120 @@ export class BehavrClient {
       total: data?.total ?? memories.length,
     };
   }
+
+  /**
+   * Get a short-lived signed link to a memory's retained original (uploaded
+   * with `retainImage: true`). Anyone with the link can download the file
+   * until it expires, so don't log or store it.
+   *
+   * Throws `MemoryNotFoundError` (404), `OriginalNotAvailableError` (404) or
+   * `OriginalPendingError` (409). Other failures throw `BehavrApiError`.
+   * Error messages never contain the signed link.
+   */
+  async getOriginal(memoryId: string, options: GetOriginalOptions = {}): Promise<OriginalLink> {
+    requireMemoryId(memoryId, "getOriginal");
+
+    const params = new URLSearchParams();
+    if (options.expiresIn !== undefined) {
+      if (!Number.isInteger(options.expiresIn)) {
+        throw new Error("getOriginal() `expiresIn` must be a whole number of seconds.");
+      }
+      params.set("expires_in", String(options.expiresIn));
+    }
+    const query = params.toString();
+
+    const res = await fetch(
+      `${this.baseUrl}/v1/memories/${encodeURIComponent(memoryId)}/original${query ? `?${query}` : ""}`,
+      { method: "GET", headers: { "X-API-Key": this.apiKey } }
+    );
+
+    const data = await parseJson(res);
+    if (!res.ok) {
+      throw createApiError(res.status, withoutUrls(data), "Failed to get original.");
+    }
+    if (typeof data?.url !== "string" || !data.url) {
+      // Deliberately does not include the response body.
+      throw new Error("getOriginal(): unexpected response from the BEHAVR API.");
+    }
+
+    return {
+      url: data.url,
+      expiresAt: data.expires_at,
+      expiresIn: data.expires_in,
+    };
+  }
+
+  /**
+   * Permanently delete one memory and everything derived from it. Scoped to
+   * the API key, not to `clientId`. Deleting the same memory twice throws
+   * `MemoryNotFoundError`.
+   *
+   * Throws `MemoryNotFoundError` (404) or `MemoryProcessingError` (409, still
+   * processing). A 500 with code `deletion_incomplete` means the request
+   * should be repeated; it is not retried automatically.
+   */
+  async deleteMemory(memoryId: string): Promise<DeleteMemoryResult> {
+    requireMemoryId(memoryId, "deleteMemory");
+
+    const res = await fetch(`${this.baseUrl}/v1/memories/${encodeURIComponent(memoryId)}`, {
+      method: "DELETE",
+      headers: { "X-API-Key": this.apiKey },
+    });
+
+    const data = await parseJson(res);
+    if (!res.ok) {
+      throw createApiError(res.status, data, "Failed to delete memory.");
+    }
+
+    return {
+      memoryId: data.memory_id,
+      deleted: data.deleted,
+      deletedMemories: data.deleted_memories,
+      deletedFiles: data.deleted_files,
+    };
+  }
+}
+
+function requireMemoryId(memoryId: unknown, method: string): void {
+  if (typeof memoryId !== "string" || !memoryId.trim()) {
+    throw new Error(`${method}() requires a \`memoryId\`.`);
+  }
+}
+
+function toSourceDetail(raw: Record<string, any>): SourceDetail {
+  return {
+    memoryId: raw?.memory_id,
+    title: raw?.title ?? "",
+    createdAt: raw?.created_at ?? null,
+    category: raw?.category ?? null,
+    snippet: raw?.snippet ?? "",
+    hasOriginal: raw?.has_original === true,
+    lowResolution: raw?.low_resolution === true,
+  };
+}
+
+const URL_PATTERN = /https?:\/\/\S+/gi;
+
+/**
+ * Defensive scrub for getOriginal() error payloads: drop any `url` field and
+ * blank out anything that looks like a link, so a signed URL can never end up
+ * in an exception message or a logged payload.
+ */
+function withoutUrls(value: any): BehavrApiErrorPayload | undefined {
+  const scrub = (v: any): any => {
+    if (typeof v === "string") return v.replace(URL_PATTERN, "[link removed]");
+    if (Array.isArray(v)) return v.map(scrub);
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, inner] of Object.entries(v)) {
+        if (k === "url") continue;
+        out[k] = scrub(inner);
+      }
+      return out;
+    }
+    return v;
+  };
+  return value === undefined ? undefined : scrub(value);
 }
 
 function camelizeKeys(obj: Record<string, unknown>): Memory {
@@ -179,5 +318,11 @@ async function parseJson(res: Response): Promise<any> {
   }
 }
 
-export { BehavrApiError };
+export {
+  BehavrApiError,
+  MemoryNotFoundError,
+  MemoryProcessingError,
+  OriginalNotAvailableError,
+  OriginalPendingError,
+};
 export * from "./types";
