@@ -197,8 +197,10 @@ export class BehavrClient {
   }
 
   /**
-   * Permanently delete one memory and everything derived from it. Scoped to
-   * the API key, not to `clientId`. Deleting the same memory twice throws
+   * Delete one memory and everything derived from it (thumbnail, any
+   * retained original). Copies outside BEHAVR's live storage, such as
+   * infrastructure backups, are not covered. Scoped to the API key, not to
+   * `clientId`. Deleting the same memory twice throws
    * `MemoryNotFoundError`.
    *
    * Throws `MemoryNotFoundError` (404) or `MemoryProcessingError` (409, still
