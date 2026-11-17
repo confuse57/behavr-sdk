@@ -171,13 +171,13 @@ try {
 
 ## `deleteMemory(memoryId)`
 
-Permanently deletes one memory and the data BEHAVR derived from it, including
-its thumbnail and any retained original.
+Deletes one memory and the data BEHAVR derived from it, including its thumbnail
+and any retained original. Copies outside BEHAVR's live storage (such as
+infrastructure backups) are not covered by this call.
 
 Returns `{ memoryId, deleted, deletedMemories, deletedFiles }`.
 
-- Deleting the same memory twice throws `MemoryNotFoundError`, because nothing
-  of it remains.
+- Deleting the same memory twice throws `MemoryNotFoundError`.
 - A memory that is still processing can't be deleted yet: this throws
   `MemoryProcessingError` (`409`). Retry once it has completed or failed.
 - If the API returns a `500` with `code === "deletion_incomplete"`, the memory
